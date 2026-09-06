@@ -1,0 +1,74 @@
+/* App.css - Main Application Styles */
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Color scheme for percentages */
+.percentage-0-60 {
+  color: #dc3545;
+  background-color: #f8d7da;
+}
+
+.percentage-60-70 {
+  color: #e69500;
+  background-color: #ffe5cc;
+}
+
+.percentage-70-80 {
+  color: #ffc107;
+  background-color: #fff8e1;
+}
+
+.percentage-80-100 {
+  color: #28a745;
+  background-color: #d4edda;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 1024px) {
+  body {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 13px;
+  }
+}
+
+/* Shared application shell */
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f7fb;
+  color: #1f2937;
+}
+
+* {
+  box-sizing: border-box;
+}
