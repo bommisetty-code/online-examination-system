@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
-  'https://online-examination-backend-sn8n.onrender.com/api';
+  'https://online-examination-backend-sn8r.onrender.com/api';
 
 // Create axios instance
 const apiClient = axios.create({
