@@ -48,6 +48,168 @@ def check_exam_class_access(student, exam):
     return student.student_class == exam.student_class
 
 
+
+# ============================================================
+# CALCULATE AND SAVE RESULT
+# ============================================================
+
+def _calculate_and_save_result(submission):
+    """
+    Calculate the final result for a submitted exam
+    and save it in the Result table.
+    """
+
+    if not submission:
+        raise ValueError('Submission is required')
+
+    if submission.status not in [
+        'submitted',
+        'auto_submitted'
+    ]:
+        raise ValueError(
+            'Result can be calculated only after submission'
+        )
+
+    exam = Exam.query.get(submission.exam_id)
+
+    if not exam:
+        raise ValueError('Exam not found')
+
+    questions = Question.query.filter_by(
+        exam_id=submission.exam_id
+    ).order_by(
+        Question.order_number
+    ).all()
+
+    total_questions = len(questions)
+
+    total_marks = sum(
+        int(question.marks or 1)
+        for question in questions
+    )
+
+    answers = StudentAnswer.query.filter_by(
+        submission_id=submission.id
+    ).all()
+
+    answer_map = {
+        answer.question_id: answer
+        for answer in answers
+    }
+
+    correct_answers = 0
+    incorrect_answers = 0
+    unanswered = 0
+    score = 0
+
+    for question in questions:
+
+        answer = answer_map.get(question.id)
+
+        if (
+            not answer
+            or answer.selected_option_id is None
+        ):
+            unanswered += 1
+
+            if answer:
+                answer.is_correct = False
+
+            continue
+
+        selected_option = Option.query.get(
+            answer.selected_option_id
+        )
+
+        if (
+            not selected_option
+            or selected_option.question_id != question.id
+        ):
+            incorrect_answers += 1
+            answer.is_correct = False
+            continue
+
+        if selected_option.is_correct:
+            correct_answers += 1
+            answer.is_correct = True
+            score += int(question.marks or 1)
+
+        else:
+            incorrect_answers += 1
+            answer.is_correct = False
+
+    if total_marks > 0:
+        percentage = (
+            Decimal(score * 100)
+            / Decimal(total_marks)
+        )
+    else:
+        percentage = Decimal('0.00')
+
+    percentage = percentage.quantize(
+        Decimal('0.01')
+    )
+
+    passing_percentage = Decimal(
+        str(
+            exam.passing_percentage
+            if exam.passing_percentage is not None
+            else 50
+        )
+    )
+
+    is_passed = percentage >= passing_percentage
+
+    submitted_at = (
+        submission.submitted_at
+        if submission.submitted_at
+        else datetime.utcnow()
+    )
+
+    result = Result.query.filter_by(
+        submission_id=submission.id
+    ).first()
+
+    if result:
+        result.student_id = submission.student_id
+        result.exam_id = submission.exam_id
+        result.total_questions = total_questions
+        result.correct_answers = correct_answers
+        result.incorrect_answers = incorrect_answers
+        result.unanswered = unanswered
+        result.score = score
+        result.total_marks = total_marks
+        result.percentage = percentage
+        result.is_passed = is_passed
+        result.submitted_at = submitted_at
+
+    else:
+        result = Result(
+            submission_id=submission.id,
+            student_id=submission.student_id,
+            exam_id=submission.exam_id,
+            total_questions=total_questions,
+            correct_answers=correct_answers,
+            incorrect_answers=incorrect_answers,
+            unanswered=unanswered,
+            score=score,
+            total_marks=total_marks,
+            percentage=percentage,
+            is_passed=is_passed,
+            submitted_at=submitted_at
+        )
+
+        db.session.add(result)
+
+    db.session.commit()
+
+    return result
+
+
+
+
+
+
 # ============================================================
 # EXAM ACCESS ROUTES
 # ============================================================
