@@ -7,12 +7,18 @@ export const studentService = {
   },
 
   getExamDetails: async (examId) => {
-    const response = await apiClient.get(`/student/exams/${examId}`);
+    const response = await apiClient.get(
+      `/student/exams/${examId}`
+    );
+
     return response.data.exam;
   },
 
   startExam: async (examId) => {
-    const response = await apiClient.post(`/student/exams/${examId}/start`);
+    const response = await apiClient.post(
+      `/student/exams/${examId}/start`
+    );
+
     return response.data;
   },
 
@@ -25,12 +31,18 @@ export const studentService = {
       questions: response.data.questions || [],
       submissionId: response.data.submission_id,
       examId: response.data.exam_id,
-      remainingSeconds: response.data.remaining_seconds ?? null,
-      durationMinutes: response.data.duration_minutes ?? null
+      remainingSeconds:
+        response.data.remaining_seconds ?? null,
+      durationMinutes:
+        response.data.duration_minutes ?? null
     };
   },
 
-  submitAnswer: async (submissionId, questionId, selectedOptionId) => {
+  submitAnswer: async (
+    submissionId,
+    questionId,
+    selectedOptionId
+  ) => {
     const response = await apiClient.post(
       `/student/submissions/${submissionId}/answer`,
       {
@@ -50,7 +62,10 @@ export const studentService = {
     return response.data;
   },
 
-  submitExam: async (submissionId, autoSubmit = false) => {
+  submitExam: async (
+    submissionId,
+    autoSubmit = false
+  ) => {
     const response = await apiClient.post(
       `/student/submissions/${submissionId}/submit`,
       {
@@ -61,6 +76,10 @@ export const studentService = {
     return response.data;
   },
 
+  // ========================================================
+  // RESULT
+  // ========================================================
+
   getResult: async (submissionId) => {
     const response = await apiClient.get(
       `/student/results/${submissionId}`
@@ -69,12 +88,28 @@ export const studentService = {
     return response.data.result;
   },
 
+  // ========================================================
+  // RESULT HISTORY
+  // ========================================================
+
   getResultHistory: async () => {
     const response = await apiClient.get(
       '/student/results/history'
     );
 
     return response.data.results;
+  },
+
+  // ========================================================
+  // ANSWER REVIEW
+  // ========================================================
+
+  getResultReview: async (submissionId) => {
+    const response = await apiClient.get(
+      `/student/results/${submissionId}/review`
+    );
+
+    return response.data;
   },
 };
 

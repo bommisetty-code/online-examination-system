@@ -70,16 +70,10 @@ def get_available_exams():
                 'message': 'Student not found'
             }), 404
 
-        # Student class must be assigned
         if not student.student_class:
             return jsonify({
                 'message': 'Student class is not assigned'
             }), 400
-
-        # ----------------------------------------------------
-        # IMPORTANT:
-        # Only active exams matching student's class
-        # ----------------------------------------------------
 
         exams = Exam.query.filter(
             Exam.is_active == True,
@@ -92,18 +86,10 @@ def get_available_exams():
 
         for exam in exams:
 
-            # ------------------------------------------------
-            # Check whether student already has a submission
-            # ------------------------------------------------
-
             submission = ExamSubmission.query.filter_by(
                 student_id=student.id,
                 exam_id=exam.id
             ).first()
-
-            # ------------------------------------------------
-            # Check result
-            # ------------------------------------------------
 
             result = Result.query.filter_by(
                 student_id=student.id,
@@ -112,34 +98,19 @@ def get_available_exams():
 
             exam_data = exam.to_dict()
 
-            # ------------------------------------------------
-            # Already taken
-            # ------------------------------------------------
-
             exam_data['already_taken'] = result is not None
-
-            # ------------------------------------------------
-            # In-progress attempt
-            # ------------------------------------------------
 
             exam_data['in_progress'] = (
                 submission is not None
                 and submission.status == 'in_progress'
             )
 
-            # ------------------------------------------------
-            # Submission ID
-            # ------------------------------------------------
-
             exam_data['submission_id'] = (
                 submission.id
-                if submission and submission.status == 'in_progress'
+                if submission
+                and submission.status == 'in_progress'
                 else None
             )
-
-            # ------------------------------------------------
-            # Admin name
-            # ------------------------------------------------
 
             admin = User.query.get(exam.created_by)
 
@@ -195,27 +166,15 @@ def get_exam_details(exam_id):
                 'message': 'Exam not found'
             }), 404
 
-        # ----------------------------------------------------
-        # Class security check
-        # ----------------------------------------------------
-
         if not check_exam_class_access(student, exam):
             return jsonify({
                 'message': 'You are not authorized to access this exam'
             }), 403
 
-        # ----------------------------------------------------
-        # Active check
-        # ----------------------------------------------------
-
         if not exam.is_active:
             return jsonify({
                 'message': 'Exam is not active'
             }), 403
-
-        # ----------------------------------------------------
-        # Already completed?
-        # ----------------------------------------------------
 
         result = Result.query.filter_by(
             student_id=student.id,
@@ -267,27 +226,15 @@ def start_exam(exam_id):
                 'message': 'Exam not found'
             }), 404
 
-        # ----------------------------------------------------
-        # Class security
-        # ----------------------------------------------------
-
         if not check_exam_class_access(student, exam):
             return jsonify({
                 'message': 'You are not authorized to take this exam'
             }), 403
 
-        # ----------------------------------------------------
-        # Active check
-        # ----------------------------------------------------
-
         if not exam.is_active:
             return jsonify({
                 'message': 'Exam is not active'
             }), 403
-
-        # ----------------------------------------------------
-        # Check completed result
-        # ----------------------------------------------------
 
         result = Result.query.filter_by(
             student_id=student.id,
@@ -301,10 +248,6 @@ def start_exam(exam_id):
                     'and cannot retake it'
                 )
             }), 409
-
-        # ----------------------------------------------------
-        # Check existing in-progress submission
-        # ----------------------------------------------------
 
         existing_submission = ExamSubmission.query.filter_by(
             student_id=student.id,
@@ -322,10 +265,6 @@ def start_exam(exam_id):
             remaining = (
                 existing_submission.duration_minutes * 60
             ) - int(elapsed)
-
-            # ------------------------------------------------
-            # If existing attempt expired, auto submit
-            # ------------------------------------------------
 
             if remaining <= 0:
 
@@ -347,10 +286,6 @@ def start_exam(exam_id):
                     'result': result.to_dict()
                 }), 410
 
-            # ------------------------------------------------
-            # Resume existing attempt
-            # ------------------------------------------------
-
             return jsonify({
                 'message': 'Exam already started',
                 'submission_id': existing_submission.id,
@@ -364,21 +299,12 @@ def start_exam(exam_id):
                 'remaining_seconds': max(0, int(remaining))
             }), 200
 
-        # ----------------------------------------------------
-        # Create new submission
-        # ----------------------------------------------------
-
         submission = ExamSubmission(
             student_id=student.id,
             exam_id=exam.id,
-
-            # Capture duration at start
             duration_minutes=exam.duration_minutes,
-
             status='in_progress',
-
             ip_address=request.remote_addr,
-
             user_agent=request.headers.get(
                 'User-Agent',
                 ''
@@ -418,7 +344,8 @@ def get_submission_questions(submission_id):
     """
     Get exam questions for an active submission.
 
-    Correct answers are NEVER sent to student.
+    IMPORTANT:
+    Correct answers are NEVER sent to student here.
     """
 
     try:
@@ -438,27 +365,15 @@ def get_submission_questions(submission_id):
                 'message': 'Submission not found'
             }), 404
 
-        # ----------------------------------------------------
-        # Submission ownership
-        # ----------------------------------------------------
-
         if submission.student_id != student.id:
             return jsonify({
                 'message': 'Access forbidden'
             }), 403
 
-        # ----------------------------------------------------
-        # Submission status
-        # ----------------------------------------------------
-
         if submission.status != 'in_progress':
             return jsonify({
                 'message': 'Exam has already been submitted'
             }), 403
-
-        # ----------------------------------------------------
-        # Get exam
-        # ----------------------------------------------------
 
         exam = Exam.query.get(submission.exam_id)
 
@@ -467,18 +382,10 @@ def get_submission_questions(submission_id):
                 'message': 'Exam not found'
             }), 404
 
-        # ----------------------------------------------------
-        # Class security
-        # ----------------------------------------------------
-
         if not check_exam_class_access(student, exam):
             return jsonify({
                 'message': 'Access forbidden'
             }), 403
-
-        # ----------------------------------------------------
-        # Backend timer validation
-        # ----------------------------------------------------
 
         elapsed_seconds = (
             datetime.utcnow()
@@ -509,10 +416,6 @@ def get_submission_questions(submission_id):
                 'result': result.to_dict()
             }), 410
 
-        # ----------------------------------------------------
-        # Get questions
-        # ----------------------------------------------------
-
         questions = Question.query.filter_by(
             exam_id=submission.exam_id
         ).order_by(
@@ -524,15 +427,10 @@ def get_submission_questions(submission_id):
         for question in questions:
 
             # IMPORTANT:
-            # Question.to_dict() does NOT expose
-            # is_correct.
+            # This does NOT expose is_correct.
             q_data = question.to_dict(
                 include_options=True
             )
-
-            # ------------------------------------------------
-            # Existing student answer
-            # ------------------------------------------------
 
             student_answer = StudentAnswer.query.filter_by(
                 submission_id=submission_id,
@@ -600,27 +498,15 @@ def submit_answer(submission_id):
                 'message': 'Submission not found'
             }), 404
 
-        # ----------------------------------------------------
-        # Ownership
-        # ----------------------------------------------------
-
         if submission.student_id != student.id:
             return jsonify({
                 'message': 'Access forbidden'
             }), 403
 
-        # ----------------------------------------------------
-        # Status
-        # ----------------------------------------------------
-
         if submission.status != 'in_progress':
             return jsonify({
                 'message': 'Exam has already been submitted'
             }), 403
-
-        # ----------------------------------------------------
-        # Backend timer
-        # ----------------------------------------------------
 
         elapsed_seconds = (
             datetime.utcnow()
@@ -633,10 +519,6 @@ def submit_answer(submission_id):
             return jsonify({
                 'message': 'Exam time expired'
             }), 410
-
-        # ----------------------------------------------------
-        # Request data
-        # ----------------------------------------------------
 
         data = request.get_json()
 
@@ -658,10 +540,6 @@ def submit_answer(submission_id):
                 'message': 'Question ID is required'
             }), 400
 
-        # ----------------------------------------------------
-        # Verify question
-        # ----------------------------------------------------
-
         question = Question.query.get(
             question_id
         )
@@ -675,10 +553,6 @@ def submit_answer(submission_id):
             return jsonify({
                 'message': 'Question does not belong to this exam'
             }), 403
-
-        # ----------------------------------------------------
-        # Verify option
-        # ----------------------------------------------------
 
         is_correct = False
 
@@ -698,15 +572,11 @@ def submit_answer(submission_id):
                     'message': 'Invalid option'
                 }), 400
 
-            # Backend knows correct answer.
+            # Backend knows the correct answer.
             # Student does NOT receive this value.
             is_correct = bool(
                 option.is_correct
             )
-
-        # ----------------------------------------------------
-        # Existing answer
-        # ----------------------------------------------------
 
         student_answer = StudentAnswer.query.filter_by(
             submission_id=submission_id,
@@ -862,18 +732,10 @@ def submit_exam(submission_id):
                 'message': 'Submission not found'
             }), 404
 
-        # ----------------------------------------------------
-        # Ownership
-        # ----------------------------------------------------
-
         if submission.student_id != student.id:
             return jsonify({
                 'message': 'Access forbidden'
             }), 403
-
-        # ----------------------------------------------------
-        # Already submitted
-        # ----------------------------------------------------
 
         if submission.status != 'in_progress':
             return jsonify({
@@ -886,10 +748,6 @@ def submit_exam(submission_id):
             data.get('auto_submit', False)
         )
 
-        # ----------------------------------------------------
-        # Backend timer
-        # ----------------------------------------------------
-
         elapsed_seconds = int(
             (
                 datetime.utcnow()
@@ -901,13 +759,8 @@ def submit_exam(submission_id):
             submission.duration_minutes * 60
         )
 
-        # Backend decides whether auto-submit is required.
         if elapsed_seconds >= max_seconds:
             auto_submit = True
-
-        # ----------------------------------------------------
-        # Submit
-        # ----------------------------------------------------
 
         submission.status = (
             'auto_submitted'
@@ -923,10 +776,6 @@ def submit_exam(submission_id):
         )
 
         db.session.commit()
-
-        # ----------------------------------------------------
-        # Calculate result
-        # ----------------------------------------------------
 
         result = _calculate_and_save_result(
             submission
@@ -949,60 +798,7 @@ def submit_exam(submission_id):
         }), 500
 
 
-# ============================================================
-# RESULT ROUTES
-# ============================================================
-
-@student_bp.route(
-    '/results/<int:submission_id>',
-    methods=['GET']
-)
-@student_required
-def get_result(submission_id):
-    """Get result for one submission."""
-
-    try:
-        student = get_current_student()
-
-        if not student:
-            return jsonify({
-                'message': 'Student not found'
-            }), 404
-
-        submission = ExamSubmission.query.get(
-            submission_id
-        )
-
-        if not submission:
-            return jsonify({
-                'message': 'Submission not found'
-            }), 404
-
-        if submission.student_id != student.id:
-            return jsonify({
-                'message': 'Access forbidden'
-            }), 403
-
-        result = Result.query.filter_by(
-            submission_id=submission_id
-        ).first()
-
-        if not result:
-            return jsonify({
-                'message': 'Result not found'
-            }), 404
-
-        return jsonify({
-            'result': result.to_dict()
-        }), 200
-
-    except Exception as e:
-
-        return jsonify({
-            'message': 'Failed to fetch result',
-            'error': str(e)
-        }), 500
-
+# ======================
 
 # ============================================================
 # RESULT HISTORY
@@ -1014,7 +810,9 @@ def get_result(submission_id):
 )
 @student_required
 def get_result_history():
-    """Get all results for logged-in student."""
+    """
+    Get result history for the logged-in student.
+    """
 
     try:
         student = get_current_student()
@@ -1027,208 +825,304 @@ def get_result_history():
         results = Result.query.filter_by(
             student_id=student.id
         ).order_by(
-            Result.submitted_at.desc()
+            Result.id.desc()
         ).all()
 
-        result_data = []
+        result_list = []
 
         for result in results:
 
-            exam = Exam.query.get(
-                result.exam_id
-            )
+            result_data = result.to_dict()
 
-            r_data = result.to_dict()
+            # Make sure frontend gets submission_id
+            result_data['submission_id'] = result.submission_id
+
+            exam = Exam.query.get(result.exam_id)
 
             if exam:
-                r_data['exam_name'] = exam.name
-                r_data['student_class'] = exam.student_class
-            else:
-                r_data['exam_name'] = 'Unknown Exam'
-                r_data['student_class'] = None
+                result_data['exam_name'] = exam.name
+                result_data['exam_id'] = exam.id
 
-            result_data.append(r_data)
+            result_list.append(result_data)
 
         return jsonify({
-            'results': result_data
+            'results': result_list
         }), 200
 
     except Exception as e:
 
         return jsonify({
-            'message': 'Failed to fetch results',
+            'message': 'Failed to fetch result history',
             'error': str(e)
         }), 500
 
 
+
 # ============================================================
-# HELPER - CALCULATE RESULT
+# STUDENT ANSWER REVIEW
 # ============================================================
 
-def _calculate_and_save_result(submission):
+@student_bp.route(
+    '/results/<int:submission_id>/review',
+    methods=['GET']
+)
+@student_required
+def get_result_review(submission_id):
     """
-    Calculate and save exam result.
+    Get question-wise answer review for a completed exam.
+
+    IMPORTANT:
+    Correct answers are available ONLY after submission.
     """
 
-    # --------------------------------------------------------
-    # Get all submitted answers
-    # --------------------------------------------------------
+    try:
+        student = get_current_student()
 
-    answers = StudentAnswer.query.filter_by(
-        submission_id=submission.id
-    ).all()
+        if not student:
+            return jsonify({
+                'message': 'Student not found'
+            }), 404
 
-    # --------------------------------------------------------
-    # Get total questions
-    # --------------------------------------------------------
+        # ----------------------------------------------------
+        # Get submission
+        # ----------------------------------------------------
 
-    questions = Question.query.filter_by(
-        exam_id=submission.exam_id
-    ).all()
-
-    total_questions = len(questions)
-
-    # --------------------------------------------------------
-    # Count answers
-    # --------------------------------------------------------
-
-    correct_count = sum(
-        1
-        for answer in answers
-        if answer.is_correct is True
-    )
-
-    incorrect_count = sum(
-        1
-        for answer in answers
-        if (
-            answer.is_correct is False
-            and answer.selected_option_id is not None
-        )
-    )
-
-    answered_count = sum(
-        1
-        for answer in answers
-        if answer.selected_option_id is not None
-    )
-
-    unanswered = max(
-        0,
-        total_questions - answered_count
-    )
-
-    # --------------------------------------------------------
-    # Calculate marks
-    # --------------------------------------------------------
-
-    total_marks = sum(
-        question.marks or 1
-        for question in questions
-    )
-
-    score = sum(
-        (question.marks or 1)
-        for question in questions
-        for answer in answers
-        if (
-            answer.question_id == question.id
-            and answer.is_correct is True
-        )
-    )
-
-    # --------------------------------------------------------
-    # Percentage
-    # --------------------------------------------------------
-
-    percentage = (
-        (score / total_marks) * 100
-        if total_marks > 0
-        else 0
-    )
-
-    # --------------------------------------------------------
-    # Exam
-    # --------------------------------------------------------
-
-    exam = Exam.query.get(
-        submission.exam_id
-    )
-
-    if not exam:
-        raise ValueError(
-            'Exam not found while calculating result'
+        submission = ExamSubmission.query.get(
+            submission_id
         )
 
-    passing_percentage = (
-        float(exam.passing_percentage)
-        if exam.passing_percentage is not None
-        else 50.0
-    )
+        if not submission:
+            return jsonify({
+                'message': 'Submission not found'
+            }), 404
 
-    is_passed = (
-        percentage >= passing_percentage
-    )
+        # ----------------------------------------------------
+        # Student ownership check
+        # ----------------------------------------------------
 
-    # --------------------------------------------------------
-    # Check if result already exists
-    # --------------------------------------------------------
+        if submission.student_id != student.id:
+            return jsonify({
+                'message': 'Access forbidden'
+            }), 403
 
-    existing_result = Result.query.filter_by(
-        submission_id=submission.id
-    ).first()
+        # ----------------------------------------------------
+        # Review allowed only after submission
+        # ----------------------------------------------------
 
-    if existing_result:
+        if submission.status not in [
+            'submitted',
+            'auto_submitted'
+        ]:
+            return jsonify({
+                'message': (
+                    'Answer review is available only '
+                    'after exam submission'
+                )
+            }), 403
 
-        existing_result.total_questions = total_questions
-        existing_result.correct_answers = correct_count
-        existing_result.incorrect_answers = incorrect_count
-        existing_result.unanswered = unanswered
-        existing_result.score = score
-        existing_result.total_marks = total_marks
-        existing_result.percentage = Decimal(
-            str(round(percentage, 2))
+        # ----------------------------------------------------
+        # Get exam
+        # ----------------------------------------------------
+
+        exam = Exam.query.get(
+            submission.exam_id
         )
-        existing_result.is_passed = is_passed
-        existing_result.submitted_at = (
-            submission.submitted_at
-        )
 
-        db.session.commit()
+        if not exam:
+            return jsonify({
+                'message': 'Exam not found'
+            }), 404
 
-        return existing_result
+        # ----------------------------------------------------
+        # Class access check
+        # ----------------------------------------------------
 
-    # --------------------------------------------------------
-    # Create result
-    # --------------------------------------------------------
+        if not check_exam_class_access(
+            student,
+            exam
+        ):
+            return jsonify({
+                'message': 'Access forbidden'
+            }), 403
 
-    result = Result(
-        submission_id=submission.id,
-        student_id=submission.student_id,
-        exam_id=submission.exam_id,
+        # ----------------------------------------------------
+        # Get result
+        # ----------------------------------------------------
 
-        total_questions=total_questions,
+        result = Result.query.filter_by(
+            student_id=student.id,
+            exam_id=submission.exam_id
+        ).first()
 
-        correct_answers=correct_count,
+        if not result:
+            return jsonify({
+                'message': 'Result not found'
+            }), 404
 
-        incorrect_answers=incorrect_count,
+        # ----------------------------------------------------
+        # Get questions
+        # ----------------------------------------------------
 
-        unanswered=unanswered,
+        questions = Question.query.filter_by(
+            exam_id=submission.exam_id
+        ).order_by(
+            Question.order_number
+        ).all()
 
-        score=score,
+        review_list = []
 
-        total_marks=total_marks,
+        correct_count = 0
+        incorrect_count = 0
+        unanswered_count = 0
 
-        percentage=Decimal(
-            str(round(percentage, 2))
-        ),
+        # ----------------------------------------------------
+        # Build question-wise review
+        # ----------------------------------------------------
 
-        is_passed=is_passed,
+        for index, question in enumerate(
+            questions,
+            start=1
+        ):
 
-        submitted_at=submission.submitted_at
-    )
+            student_answer = StudentAnswer.query.filter_by(
+                submission_id=submission_id,
+                question_id=question.id
+            ).first()
 
-    db.session.add(result)
-    db.session.commit()
+            # Correct option
+            correct_option = Option.query.filter_by(
+                question_id=question.id,
+                is_correct=True
+            ).first()
 
-    return result
+            # ------------------------------------------------
+            # Unanswered
+            # ------------------------------------------------
+
+            if (
+                not student_answer
+                or student_answer.selected_option_id is None
+            ):
+
+                answer_status = 'unanswered'
+
+                student_answer_text = None
+
+                unanswered_count += 1
+
+            else:
+
+                selected_option = Option.query.get(
+                    student_answer.selected_option_id
+                )
+
+                if selected_option:
+
+                    student_answer_text = (
+                        selected_option.option_text
+                    )
+
+                else:
+
+                    student_answer_text = None
+
+                # --------------------------------------------
+                # Correct / Incorrect
+                # --------------------------------------------
+
+                if student_answer.is_correct:
+
+                    answer_status = 'correct'
+
+                    correct_count += 1
+
+                else:
+
+                    answer_status = 'incorrect'
+
+                    incorrect_count += 1
+
+            # ------------------------------------------------
+            # Correct answer text
+            # ------------------------------------------------
+
+            correct_answer_text = None
+
+            if correct_option:
+                correct_answer_text = (
+                    correct_option.option_text
+                )
+
+            # ------------------------------------------------
+            # Add review item
+            # ------------------------------------------------
+
+            review_list.append({
+                'question_id': question.id,
+
+                'question_number': (
+                    question.order_number
+                    or index
+                ),
+
+                'question_text': question.question_text,
+
+                'answer_status': answer_status,
+
+                'student_answer': student_answer_text,
+
+                'student_answer_option_id': (
+                    student_answer.selected_option_id
+                    if student_answer
+                    else None
+                ),
+
+                'correct_answer': correct_answer_text,
+
+                'correct_answer_option_id': (
+                    correct_option.id
+                    if correct_option
+                    else None
+                )
+            })
+
+        # ----------------------------------------------------
+        # Response
+        # ----------------------------------------------------
+
+        return jsonify({
+
+            'review': review_list,
+
+            'summary': {
+                'total_questions': len(questions),
+                'correct': correct_count,
+                'incorrect': incorrect_count,
+                'unanswered': unanswered_count
+            },
+
+            'result': result.to_dict(),
+
+            'exam': {
+                'id': exam.id,
+                'name': exam.name
+            },
+
+            'submission': {
+                'id': submission.id,
+                'status': submission.status,
+                'submitted_at': (
+                    submission.submitted_at.isoformat()
+                    if submission.submitted_at
+                    else None
+                )
+            }
+
+        }), 200
+
+    except Exception as e:
+
+        return jsonify({
+            'message': 'Failed to load answer review',
+            'error': str(e)
+        }), 500

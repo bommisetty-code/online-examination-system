@@ -1,15 +1,26 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate
+} from 'react-router-dom';
+
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+
 import LoginPage from './pages/LoginPage';
+
 import AdminDashboard from './pages/AdminDashboard';
 import ExamManagement from './pages/ExamManagement';
 import AdminResultsDashboard from './pages/AdminResultsDashboard';
 import ResultsDetailView from './pages/ResultsDetailView';
+
 import StudentDashboard from './pages/StudentDashboard';
 import ExamInterface from './pages/ExamInterface';
 import ResultsPage from './pages/ResultsPage';
+import StudentAnswerReview from './pages/StudentAnswerReview';
+
 import './App.css';
 
 function App() {
@@ -17,12 +28,31 @@ function App() {
     <AuthProvider>
       <Router>
         <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
 
-          {/* Public routes */}
-          <Route path="/login" element={<LoginPage />} />
+          {/* =====================================================
+              ROOT
+          ===================================================== */}
 
-          {/* Admin routes */}
+          <Route
+            path="/"
+            element={<Navigate to="/login" replace />}
+          />
+
+
+          {/* =====================================================
+              PUBLIC ROUTES
+          ===================================================== */}
+
+          <Route
+            path="/login"
+            element={<LoginPage />}
+          />
+
+
+          {/* =====================================================
+              ADMIN ROUTES
+          ===================================================== */}
+
           <Route
             path="/admin/dashboard"
             element={
@@ -31,6 +61,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/admin/exam/:examId/manage"
             element={
@@ -39,6 +70,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/admin/results"
             element={
@@ -47,6 +79,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/admin/results/:examId"
             element={
@@ -56,7 +89,12 @@ function App() {
             }
           />
 
-          {/* Student routes */}
+
+          {/* =====================================================
+              STUDENT ROUTES
+          ===================================================== */}
+
+          {/* Student Dashboard */}
           <Route
             path="/student/dashboard"
             element={
@@ -65,6 +103,9 @@ function App() {
               </ProtectedRoute>
             }
           />
+
+
+          {/* Active Exam */}
           <Route
             path="/student/exam/:submissionId"
             element={
@@ -73,6 +114,9 @@ function App() {
               </ProtectedRoute>
             }
           />
+
+
+          {/* Result Page */}
           <Route
             path="/student/results/:submissionId"
             element={
@@ -80,6 +124,27 @@ function App() {
                 <ResultsPage />
               </ProtectedRoute>
             }
+          />
+
+
+          {/* Answer Review */}
+          <Route
+            path="/student/result-review/:submissionId"
+            element={
+              <ProtectedRoute requiredRole="student">
+                <StudentAnswerReview />
+              </ProtectedRoute>
+            }
+          />
+
+
+          {/* =====================================================
+              FALLBACK
+          ===================================================== */}
+
+          <Route
+            path="*"
+            element={<Navigate to="/login" replace />}
           />
 
         </Routes>

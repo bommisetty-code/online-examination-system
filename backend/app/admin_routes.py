@@ -20,6 +20,7 @@ from app.errors import ValidationError, NotFoundError, AuthorizationError
 from app.services import AuthService
 from datetime import datetime
 import uuid
+from openpyxl import load_workbook
 
 
 admin_bp = Blueprint(
@@ -603,6 +604,382 @@ def create_question(exam_id):
             'message': 'Failed to create question',
             'error': str(e)
         }), 500
+
+
+
+# ============================================================
+# BULK QUESTION EXCEL UPLOAD
+# ============================================================
+
+@admin_bp.route(
+    '/exams/<int:exam_id>/questions/bulk-upload',
+    methods=['POST']
+)
+@admin_required
+def bulk_upload_questions(exam_id):
+    """
+    Upload multiple questions from an Excel (.xlsx) file.
+
+    Required Excel columns:
+    Question | Option A | Option B | Option C | Option D | Correct Option
+
+    Correct Option must be A, B, C, or D.
+    Each imported question receives 1 mark.
+    """
+
+    try:
+        admin_id = int(get_jwt_identity())
+
+        # ----------------------------------------------------
+        # Check exam
+        # ----------------------------------------------------
+
+        exam = Exam.query.get(exam_id)
+
+        if not exam:
+            return jsonify({
+                'message': 'Exam not found'
+            }), 404
+
+        # ----------------------------------------------------
+        # Check admin ownership
+        # ----------------------------------------------------
+
+        if exam.created_by != admin_id:
+            return jsonify({
+                'message': 'Access forbidden'
+            }), 403
+
+        # ----------------------------------------------------
+        # Check uploaded file
+        # ----------------------------------------------------
+
+        if 'file' not in request.files:
+            return jsonify({
+                'message': 'Please upload an Excel file'
+            }), 400
+
+        file = request.files['file']
+
+        if not file or not file.filename:
+            return jsonify({
+                'message': 'Please select an Excel file'
+            }), 400
+
+        # ----------------------------------------------------
+        # Only XLSX allowed
+        # ----------------------------------------------------
+
+        if not file.filename.lower().endswith('.xlsx'):
+            return jsonify({
+                'message': 'Only .xlsx Excel files are allowed'
+            }), 400
+
+        # ----------------------------------------------------
+        # Load workbook
+        # ----------------------------------------------------
+
+        try:
+            workbook = load_workbook(
+                file,
+                read_only=True,
+                data_only=True
+            )
+        except Exception:
+            return jsonify({
+                'message': (
+                    'Invalid Excel file. '
+                    'Please upload a valid .xlsx file'
+                )
+            }), 400
+
+        worksheet = workbook.active
+
+        # ----------------------------------------------------
+        # Required headers
+        # ----------------------------------------------------
+
+        required_headers = [
+            'Question',
+            'Option A',
+            'Option B',
+            'Option C',
+            'Option D',
+            'Correct Option'
+        ]
+
+        # Read first row
+        header_row = next(
+            worksheet.iter_rows(
+                min_row=1,
+                max_row=1,
+                values_only=True
+            ),
+            None
+        )
+
+        if not header_row:
+            workbook.close()
+
+            return jsonify({
+                'message': 'Excel file is empty'
+            }), 400
+
+        # Normalize headers
+        actual_headers = [
+            str(value).strip()
+            if value is not None
+            else ''
+            for value in header_row
+        ]
+
+        # ----------------------------------------------------
+        # Validate headers
+        # ----------------------------------------------------
+
+        missing_headers = [
+            header
+            for header in required_headers
+            if header not in actual_headers
+        ]
+
+        if missing_headers:
+            workbook.close()
+
+            return jsonify({
+                'message': 'Invalid Excel headers',
+                'missing_headers': missing_headers,
+                'required_headers': required_headers
+            }), 400
+
+        # Create header -> column index mapping
+        header_indexes = {
+            header: actual_headers.index(header)
+            for header in required_headers
+        }
+
+        # ----------------------------------------------------
+        # Read Excel rows first
+        # ----------------------------------------------------
+
+        rows_to_import = []
+        validation_errors = []
+
+        for row_number, row in enumerate(
+            worksheet.iter_rows(
+                min_row=2,
+                values_only=True
+            ),
+            start=2
+        ):
+
+            # Skip completely empty rows
+            if not any(
+                value is not None and str(value).strip()
+                for value in row
+            ):
+                continue
+
+            def get_cell(header):
+                index = header_indexes[header]
+
+                if index >= len(row):
+                    return ''
+
+                value = row[index]
+
+                if value is None:
+                    return ''
+
+                return str(value).strip()
+
+            question_text = get_cell('Question')
+            option_a = get_cell('Option A')
+            option_b = get_cell('Option B')
+            option_c = get_cell('Option C')
+            option_d = get_cell('Option D')
+            correct_option = get_cell('Correct Option').upper()
+
+            # ------------------------------------------------
+            # Validate question
+            # ------------------------------------------------
+
+            if not question_text:
+                validation_errors.append(
+                    f'Row {row_number}: Question is required'
+                )
+                continue
+
+            # ------------------------------------------------
+            # Validate all four options
+            # ------------------------------------------------
+
+            if not option_a:
+                validation_errors.append(
+                    f'Row {row_number}: Option A is required'
+                )
+                continue
+
+            if not option_b:
+                validation_errors.append(
+                    f'Row {row_number}: Option B is required'
+                )
+                continue
+
+            if not option_c:
+                validation_errors.append(
+                    f'Row {row_number}: Option C is required'
+                )
+                continue
+
+            if not option_d:
+                validation_errors.append(
+                    f'Row {row_number}: Option D is required'
+                )
+                continue
+
+            # ------------------------------------------------
+            # Validate correct option
+            # ------------------------------------------------
+
+            if correct_option not in ['A', 'B', 'C', 'D']:
+                validation_errors.append(
+                    f'Row {row_number}: '
+                    f'Correct Option must be A, B, C, or D'
+                )
+                continue
+
+            rows_to_import.append({
+                'question_text': question_text,
+                'options': [
+                    {
+                        'option_text': option_a,
+                        'option_order': 1,
+                        'is_correct': correct_option == 'A'
+                    },
+                    {
+                        'option_text': option_b,
+                        'option_order': 2,
+                        'is_correct': correct_option == 'B'
+                    },
+                    {
+                        'option_text': option_c,
+                        'option_order': 3,
+                        'is_correct': correct_option == 'C'
+                    },
+                    {
+                        'option_text': option_d,
+                        'option_order': 4,
+                        'is_correct': correct_option == 'D'
+                    }
+                ]
+            })
+
+        workbook.close()
+
+        # ----------------------------------------------------
+        # Stop if validation errors exist
+        # ----------------------------------------------------
+
+        if validation_errors:
+            return jsonify({
+                'message': 'Excel validation failed',
+                'errors': validation_errors
+            }), 400
+
+        if not rows_to_import:
+            return jsonify({
+                'message': 'No questions found in the Excel file'
+            }), 400
+
+        # ----------------------------------------------------
+        # Get next question order number
+        # ----------------------------------------------------
+
+        last_question = (
+            Question.query
+            .filter_by(exam_id=exam_id)
+            .order_by(
+                Question.order_number.desc()
+            )
+            .first()
+        )
+
+        next_order_number = (
+            last_question.order_number + 1
+            if last_question
+            else 1
+        )
+
+        # ----------------------------------------------------
+        # Create questions and options
+        # ----------------------------------------------------
+
+        for question_data in rows_to_import:
+
+            question = Question(
+                exam_id=exam_id,
+                question_text=question_data['question_text'],
+                marks=1,
+                order_number=next_order_number
+            )
+
+            db.session.add(question)
+            db.session.flush()
+
+            for option_data in question_data['options']:
+
+                option = Option(
+                    question_id=question.id,
+                    option_text=option_data['option_text'],
+                    option_order=option_data['option_order'],
+                    is_correct=option_data['is_correct']
+                )
+
+                db.session.add(option)
+
+            next_order_number += 1
+
+        # ----------------------------------------------------
+        # Update total questions
+        # ----------------------------------------------------
+
+        db.session.flush()
+
+        exam.total_questions = (
+            Question.query
+            .filter_by(exam_id=exam_id)
+            .count()
+        )
+
+        exam.updated_at = datetime.utcnow()
+
+        # ----------------------------------------------------
+        # Commit everything together
+        # ----------------------------------------------------
+
+        db.session.commit()
+
+        return jsonify({
+            'message': (
+                f'{len(rows_to_import)} questions '
+                f'imported successfully'
+            ),
+            'imported_count': len(rows_to_import),
+            'total_questions': exam.total_questions
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+
+        return jsonify({
+            'message': 'Failed to import questions',
+            'error': str(e)
+        }), 500
+
+
+
+
 
 
 @admin_bp.route(
