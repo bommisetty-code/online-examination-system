@@ -1,712 +1,595 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import studentService from '../services/studentService';
-import { useTimer } from '../hooks/useTimer';
-import { useBackButtonProtection } from '../hooks/useBackButtonProtection';
-import BackButtonWarning from '../components/BackButtonWarning';
-import '../styles/ExamInterface.css';
+import './ExamInterface.css';
 
-export const ExamInterface = () => {
-  const { submissionId } = useParams();
+const ExamInterface = () => {
+  const { examId } = useParams();
   const navigate = useNavigate();
 
-  const [exam, setExam] = useState(null);
+  const [examData, setExamData] = useState(null);
   const [questions, setQuestions] = useState([]);
+  const [submissionId, setSubmissionId] = useState(null);
+
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
-  const [isLoading, setIsLoading] = useState(true);
+
+  const [timeRemaining, setTimeRemaining] = useState(0);
+
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showBackWarning, setShowBackWarning] = useState(false);
-  const [showExitWarning, setShowExitWarning] = useState(false);
-  const [durationMinutes, setDurationMinutes] = useState(null);
 
-  // ============================================================
-  // RESULT STATE
-  // ============================================================
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
 
+  // Final result
   const [submissionResult, setSubmissionResult] = useState(null);
   const [showResult, setShowResult] = useState(false);
 
-  const { showWarningNeeded, resetWarningFlag } =
-    useBackButtonProtection(true);
+  const currentQuestion = questions[currentQuestionIndex];
 
-  // ============================================================
-  // TIMER
-  // Backend remaining time is the source of truth
-  // ============================================================
+  // =========================================================
+  // LOAD EXAM
+  // =========================================================
 
-  const {
-    remainingTime,
-    formattedTime,
-    isExpired
-  } = useTimer(
-    durationMinutes,
-    async () => {
+  useEffect(() => {
+    const loadExam = async () => {
       try {
-        setIsSubmitting(true);
+        setLoading(true);
         setError('');
 
-        const response =
-          await studentService.submitExam(
-            submissionId,
-            true
-          );
+        const response = await studentService.startExam(examId);
 
-        console.log(
-          'Auto submit result:',
-          response
-        );
+        setExamData(response.exam || response);
+        setQuestions(response.questions || []);
+        setSubmissionId(response.submission_id);
 
-        setSubmissionResult(
-          response?.result || null
-        );
+        if (response.answers) {
+          setAnswers(response.answers);
+        }
 
-        setShowResult(true);
+        if (response.expiry_time) {
+          const expiry = new Date(
+            response.expiry_time
+          ).getTime();
 
-      } catch (err) {
-        console.error(
-          'Auto submit failed:',
-          err
-        );
+          const now = Date.now();
 
-        setError(
-          err.response?.data?.message ||
-          'Failed to submit exam automatically'
-        );
-
-      } finally {
-        setIsSubmitting(false);
-      }
-    }
-  );
-
-  // ============================================================
-  // LOAD EXAM
-  // ============================================================
-
-  useEffect(() => {
-    loadExamData();
-  }, [submissionId]);
-
-  // ============================================================
-  // BACKEND TIMER VALIDATION
-  // ============================================================
-
-  useEffect(() => {
-    const validateInterval = setInterval(
-      async () => {
-        try {
-          const status =
-            await studentService.getSubmissionStatus(
-              submissionId
-            );
-
-          // Backend says time expired
-          if (status.is_expired) {
-            if (!isSubmitting) {
-              await handleTimeExpired();
-            }
-
-            return;
-          }
-
-          // Backend says exam is no longer active
-          if (!status.is_active) {
-            navigate(
-              `/student/results/${submissionId}`
-            );
-
-            return;
-          }
-
-        } catch (err) {
-          console.error(
-            'Status check failed:',
-            err
+          setTimeRemaining(
+            Math.max(
+              0,
+              Math.floor((expiry - now) / 1000)
+            )
           );
         }
-      },
-      5000
-    );
+      } catch (err) {
+        console.error('Failed to load exam:', err);
 
-    return () =>
-      clearInterval(validateInterval);
-  }, [
-    submissionId,
-    isSubmitting,
-    navigate
-  ]);
-
-  // ============================================================
-  // BROWSER BACK BUTTON PROTECTION
-  // ============================================================
-
-  useEffect(() => {
-    const handlePopState = (e) => {
-      e.preventDefault();
-
-      window.history.pushState(
-        null,
-        '',
-        window.location.href
-      );
-
-      if (showWarningNeeded()) {
-        setShowBackWarning(true);
-      } else {
-        handleAutoSubmit();
+        setError(
+          err?.response?.data?.message ||
+          'Failed to load exam'
+        );
+      } finally {
+        setLoading(false);
       }
     };
 
-    window.history.pushState(
-      null,
-      '',
-      window.location.href
-    );
+    loadExam();
+  }, [examId]);
 
-    window.addEventListener(
-      'popstate',
-      handlePopState
-    );
-
-    return () => {
-      window.removeEventListener(
-        'popstate',
-        handlePopState
-      );
-    };
-  }, [showWarningNeeded]);
-
-  // ============================================================
-  // LOAD QUESTIONS + BACKEND REMAINING TIME
-  // ============================================================
-
-  const loadExamData = async () => {
-    try {
-      setIsLoading(true);
-      setError('');
-
-      const examData =
-        await studentService.getExamQuestions(
-          submissionId
-        );
-
-      const questionsData =
-        examData.questions || [];
-
-      if (questionsData.length === 0) {
-        setError(
-          'No questions found for this exam'
-        );
-        return;
-      }
-
-      setQuestions(questionsData);
-
-      // --------------------------------------------------------
-      // Get exact remaining time from backend
-      // --------------------------------------------------------
-
-      let remainingSeconds =
-        examData.remainingSeconds;
-
-      // If questions API doesn't return remaining time,
-      // get it from backend status API.
-      if (
-        typeof remainingSeconds !== 'number'
-      ) {
-        const status =
-          await studentService.getSubmissionStatus(
-            submissionId
-          );
-
-        remainingSeconds =
-          Number(status.remaining_seconds);
-      }
-
-      if (
-        Number.isFinite(remainingSeconds) &&
-        remainingSeconds >= 0
-      ) {
-        // useTimer expects minutes
-        setDurationMinutes(
-          remainingSeconds / 60
-        );
-      } else {
-        setError(
-          'Unable to get exam remaining time from server'
-        );
-        return;
-      }
-
-      // --------------------------------------------------------
-      // Initialize existing answers
-      // --------------------------------------------------------
-
-      const initialAnswers = {};
-
-      questionsData.forEach((q) => {
-        initialAnswers[q.id] =
-          q.student_answer || null;
-      });
-
-      setAnswers(initialAnswers);
-
-    } catch (err) {
-      console.error(
-        'Failed to load exam:',
-        err
-      );
-
-      setError(
-        err.response?.data?.message ||
-        'Failed to load exam'
-      );
-
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // ============================================================
-  // CURRENT QUESTION
-  // ============================================================
-
-  const currentQuestion =
-    questions[currentQuestionIndex];
-
-  const answeredCount =
-    Object.values(answers).filter(
-      (a) => a !== null
-    ).length;
-
-  // ============================================================
-  // ANSWER SELECT
-  // ============================================================
+  // =========================================================
+  // SAVE ANSWER
+  // =========================================================
 
   const handleAnswerSelect = async (
+    questionId,
     optionId
   ) => {
     try {
-      setAnswers((prev) => ({
+      setAnswers(prev => ({
         ...prev,
-        [currentQuestion.id]: optionId,
+        [questionId]: optionId
       }));
 
       await studentService.submitAnswer(
         submissionId,
-        currentQuestion.id,
+        questionId,
         optionId
       );
-
     } catch (err) {
-      setError(
-        err.response?.data?.message ||
-        'Failed to save answer'
+      console.error(
+        'Failed to save answer:',
+        err
       );
 
-      console.error(err);
+      setError(
+        err?.response?.data?.message ||
+        'Failed to save answer'
+      );
     }
   };
 
-  // ============================================================
-  // NAVIGATION
-  // ============================================================
+  // =========================================================
+  // SUBMIT EXAM
+  // =========================================================
 
-  const handleNextQuestion = () => {
+  const submitExam = useCallback(async () => {
+    if (!submissionId || submitting) {
+      return null;
+    }
+
+    try {
+      setSubmitting(true);
+      setError('');
+
+      const response =
+        await studentService.submitExam(
+          submissionId
+        );
+
+      return response;
+    } catch (err) {
+      console.error(
+        'Failed to submit exam:',
+        err
+      );
+
+      setError(
+        err?.response?.data?.message ||
+        'Failed to submit exam'
+      );
+
+      return null;
+    } finally {
+      setSubmitting(false);
+    }
+  }, [submissionId, submitting]);
+
+  // =========================================================
+  // MANUAL SUBMIT
+  // =========================================================
+
+  const handleManualSubmit = async () => {
+    setShowSubmitModal(false);
+
+    const response = await submitExam();
+
+    if (response?.result) {
+      setSubmissionResult(response.result);
+      setShowResult(true);
+    }
+  };
+
+  // =========================================================
+  // AUTO SUBMIT
+  // =========================================================
+
+  const handleAutoSubmit = useCallback(async () => {
+    if (showResult || submitting) {
+      return;
+    }
+
+    const response = await submitExam();
+
+    if (response?.result) {
+      setSubmissionResult(response.result);
+      setShowResult(true);
+    }
+  }, [
+    showResult,
+    submitting,
+    submitExam
+  ]);
+
+  // =========================================================
+  // TIMER
+  // =========================================================
+
+  useEffect(() => {
+    // IMPORTANT:
+    // After result popup appears, stop timer completely.
+    if (loading || showResult) {
+      return;
+    }
+
+    if (timeRemaining <= 0) {
+      handleAutoSubmit();
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setTimeRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [
+    loading,
+    timeRemaining,
+    showResult,
+    handleAutoSubmit
+  ]);
+
+  // =========================================================
+  // FORMAT TIMER
+  // =========================================================
+
+  const formatTime = seconds => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+
+    return `${String(mins).padStart(2, '0')}:${String(
+      secs
+    ).padStart(2, '0')}`;
+  };
+
+  // =========================================================
+  // QUESTION NAVIGATION
+  // =========================================================
+
+  const goToQuestion = index => {
+    if (
+      index >= 0 &&
+      index < questions.length
+    ) {
+      setCurrentQuestionIndex(index);
+    }
+  };
+
+  const handleNext = () => {
     if (
       currentQuestionIndex <
       questions.length - 1
     ) {
       setCurrentQuestionIndex(
-        currentQuestionIndex + 1
+        prev => prev + 1
       );
     }
   };
 
-  const handlePreviousQuestion = () => {
-    if (
-      currentQuestionIndex > 0
-    ) {
+  const handlePrevious = () => {
+    if (currentQuestionIndex > 0) {
       setCurrentQuestionIndex(
-        currentQuestionIndex - 1
+        prev => prev - 1
       );
     }
   };
 
-  // ============================================================
-  // TIME EXPIRED
-  // ============================================================
-
-  const handleTimeExpired = async () => {
-    await handleAutoSubmit();
-  };
-
-  // ============================================================
-  // AUTO SUBMIT
-  // ============================================================
-
-  const handleAutoSubmit = async () => {
-    if (isSubmitting) {
-      return;
-    }
-
-    try {
-      setIsSubmitting(true);
-      setError('');
-
-      const response =
-        await studentService.submitExam(
-          submissionId,
-          true
-        );
-
-      console.log(
-        'Auto submit result:',
-        response
-      );
-
-      // Backend returns result
-      setSubmissionResult(
-        response?.result || null
-      );
-
-      // Show result popup immediately
-      setShowResult(true);
-
-    } catch (err) {
-      console.error(
-        'Auto submit failed:',
-        err
-      );
-
-      setError(
-        err.response?.data?.message ||
-        'Failed to submit exam'
-      );
-
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // ============================================================
-  // MANUAL SUBMIT
-  // ============================================================
-
-  const handleManualSubmit = async () => {
-    setShowExitWarning(false);
-
-    try {
-      setIsSubmitting(true);
-      setError('');
-
-      const response =
-        await studentService.submitExam(
-          submissionId,
-          false
-        );
-
-      console.log(
-        'Manual submit result:',
-        response
-      );
-
-      // Backend returns result
-      setSubmissionResult(
-        response?.result || null
-      );
-
-      // Show result popup immediately
-      setShowResult(true);
-
-    } catch (err) {
-      console.error(
-        'Exam submission failed:',
-        err
-      );
-
-      setError(
-        err.response?.data?.message ||
-        'Failed to submit exam'
-      );
-
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // ============================================================
-  // BACK WARNING
-  // ============================================================
-
-  const handleBackWarningResponse = (
-    confirmed
-  ) => {
-    setShowBackWarning(false);
-
-    if (confirmed) {
-      handleAutoSubmit();
-    } else {
-      resetWarningFlag();
-    }
-  };
-
-  // ============================================================
+  // =========================================================
   // LOADING
-  // ============================================================
+  // =========================================================
 
-  if (isLoading) {
+  if (loading) {
     return (
-      <div className="loading">
-        Loading exam...
+      <div className="exam-page">
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+
+          <p>Loading exam...</p>
+        </div>
       </div>
     );
   }
 
-  // ============================================================
+  // =========================================================
   // ERROR
-  // ============================================================
+  // =========================================================
 
-  if (error) {
+  if (error && !examData) {
     return (
-      <div className="error-container">
-        <div className="error-box">
+      <div className="exam-page">
+        <div className="error-container">
 
-          <h2>Error</h2>
+          <h2>Unable to Load Exam</h2>
 
           <p>{error}</p>
 
           <button
+            className="confirm-button"
             onClick={() =>
               navigate('/student/dashboard')
             }
-            className="back-button"
           >
-            Return to Dashboard
+            Back to Dashboard
           </button>
 
         </div>
       </div>
     );
   }
+
+  // =========================================================
+  // NO QUESTIONS
+  // =========================================================
 
   if (!currentQuestion) {
     return (
-      <div className="loading">
-        Loading questions...
+      <div className="exam-page">
+
+        <div className="error-container">
+
+          <h2>No Questions Found</h2>
+
+          <button
+            className="confirm-button"
+            onClick={() =>
+              navigate('/student/dashboard')
+            }
+          >
+            Back to Dashboard
+          </button>
+
+        </div>
+
       </div>
     );
   }
 
-  // ============================================================
-  // UI
-  // ============================================================
+  // =========================================================
+  // MAIN UI
+  // =========================================================
 
   return (
-    <div className="exam-interface-container">
+    <div className="exam-page">
 
-      {/* ======================================================
-          BACK BUTTON WARNING
-      ====================================================== */}
-
-      {showBackWarning && (
-        <BackButtonWarning
-          onResponse={
-            handleBackWarningResponse
-          }
-        />
-      )}
-
-      {/* ======================================================
-          RESULT MODAL
-      ====================================================== */}
-
-      {showResult && submissionResult && (
-        <div className="modal-overlay">
-
-          <div className="modal result-modal">
-
-            <h2>
-              🎉 Exam Submitted Successfully
-            </h2>
-
-            <div className="result-summary">
-
-              {/* Score */}
-              <div className="result-item">
-                <span>
-                  Score
-                </span>
-
-                <strong>
-                  {submissionResult.score}
-                  {' / '}
-                  {submissionResult.total_marks}
-                </strong>
-              </div>
-
-              {/* Percentage */}
-              <div className="result-item">
-                <span>
-                  Percentage
-                </span>
-
-                <strong>
-                  {submissionResult.percentage}%
-                </strong>
-              </div>
-
-              {/* Correct */}
-              <div className="result-item">
-                <span>
-                  Correct
-                </span>
-
-                <strong>
-                  {submissionResult.correct_answers}
-                </strong>
-              </div>
-
-              {/* Incorrect */}
-              <div className="result-item">
-                <span>
-                  Incorrect
-                </span>
-
-                <strong>
-                  {submissionResult.incorrect_answers}
-                </strong>
-              </div>
-
-              {/* Unanswered */}
-              <div className="result-item">
-                <span>
-                  Unanswered
-                </span>
-
-                <strong>
-                  {submissionResult.unanswered}
-                </strong>
-              </div>
-
-              {/* Status */}
-              <div className="result-item">
-                <span>
-                  Status
-                </span>
-
-                <strong
-                  className={
-                    submissionResult.is_passed
-                      ? 'passed'
-                      : 'failed'
-                  }
-                >
-                  {submissionResult.is_passed
-                    ? 'PASS'
-                    : 'FAIL'}
-                </strong>
-              </div>
-
-            </div>
-
-            {/* Buttons */}
-            <div className="modal-buttons">
-
-              <button
-                className="cancel-button"
-                onClick={() =>
-                  navigate(
-                    '/student/dashboard'
-                  )
-                }
-              >
-                Back to Dashboard
-              </button>
-
-              <button
-                className="confirm-button"
-                onClick={() =>
-                  navigate(
-                    `/student/result-review/${submissionId}`
-                  )
-                }
-              >
-                View Detailed Review
-              </button>
-
-            </div>
-
-          </div>
-
-        </div>
-      )}
-
-      {/* ======================================================
-          HEADER
-      ====================================================== */}
-
+      {/* HEADER */}
       <header className="exam-header">
 
-        <div className="header-left">
+        <div>
+          <h1>
+            {examData?.name ||
+              'Online Examination'}
+          </h1>
 
-          <h2>
-            Exam in Progress
-          </h2>
-
+          {examData?.description && (
+            <p>
+              {examData.description}
+            </p>
+          )}
         </div>
 
-        <div className="header-center">
+        <div className="timer-box">
 
-          <div
-            className={`timer ${
-              isExpired
-                ? 'expired'
-                : remainingTime < 300
-                  ? 'warning'
-                  : ''
-            }`}
-          >
-            ⏱️ {formattedTime}
-          </div>
+          <span>
+            Time Remaining
+          </span>
 
-        </div>
-
-        <div className="header-right">
-
-          <button
-            onClick={() =>
-              setShowExitWarning(true)
+          <strong
+            className={
+              timeRemaining <= 60
+                ? 'timer-danger'
+                : ''
             }
-            className="submit-button"
-            disabled={isSubmitting}
           >
-            Submit Exam
-          </button>
+            {formatTime(timeRemaining)}
+          </strong>
 
         </div>
 
       </header>
 
-      {/* ======================================================
-          SUBMIT CONFIRMATION MODAL
-      ====================================================== */}
+      {/* MAIN CONTENT */}
+      <main className="exam-content">
 
-      {showExitWarning && (
+        {/* QUESTIONS */}
+        <section className="questions-section">
+
+          <div className="question-header">
+
+            <span>
+              Question{' '}
+              {currentQuestionIndex + 1}{' '}
+              of {questions.length}
+            </span>
+
+            <span>
+              {Object.keys(answers).length}{' '}
+              answered
+            </span>
+
+          </div>
+
+          {/* QUESTION */}
+          <div className="question-box">
+
+            <h2 className="question-text">
+              {currentQuestion.question_text}
+            </h2>
+
+            <div className="options-list">
+
+              {currentQuestion.options?.map(
+                (option, index) => {
+
+                  const optionId =
+                    option.id;
+
+                  const selected =
+                    answers[
+                      currentQuestion.id
+                    ] === optionId;
+
+                  return (
+                    <button
+                      key={optionId}
+                      type="button"
+                      className={`option-button ${
+                        selected
+                          ? 'selected'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        handleAnswerSelect(
+                          currentQuestion.id,
+                          optionId
+                        )
+                      }
+                    >
+
+                      <span className="option-label">
+                        {String.fromCharCode(
+                          65 + index
+                        )}
+                      </span>
+
+                      <span className="option-text">
+                        {option.option_text}
+                      </span>
+
+                    </button>
+                  );
+                }
+              )}
+
+            </div>
+
+          </div>
+
+          {/* NAVIGATION */}
+          <div className="navigation-buttons">
+
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handlePrevious}
+              disabled={
+                currentQuestionIndex === 0
+              }
+            >
+              ← Previous
+            </button>
+
+            {currentQuestionIndex <
+            questions.length - 1 ? (
+
+              <button
+                type="button"
+                className="confirm-button"
+                onClick={handleNext}
+              >
+                Next →
+              </button>
+
+            ) : (
+
+              <button
+                type="button"
+                className="submit-button"
+                onClick={() =>
+                  setShowSubmitModal(true)
+                }
+                disabled={
+                  submitting ||
+                  showResult
+                }
+              >
+                {submitting
+                  ? 'Submitting...'
+                  : 'Submit Exam'}
+              </button>
+
+            )}
+
+          </div>
+
+        </section>
+
+        {/* QUESTION SIDEBAR */}
+        <aside className="question-sidebar">
+
+          <h3>Questions</h3>
+
+          <div className="question-grid">
+
+            {questions.map(
+              (question, index) => {
+
+                const answered =
+                  answers[
+                    question.id
+                  ] !== undefined &&
+                  answers[
+                    question.id
+                  ] !== null;
+
+                return (
+                  <button
+                    key={question.id}
+                    type="button"
+                    className={`question-number ${
+                      index ===
+                      currentQuestionIndex
+                        ? 'current'
+                        : ''
+                    } ${
+                      answered
+                        ? 'answered'
+                        : ''
+                    }`}
+                    onClick={() =>
+                      goToQuestion(index)
+                    }
+                  >
+                    {index + 1}
+                  </button>
+                );
+              }
+            )}
+
+          </div>
+
+          <div className="question-legend">
+
+            <div>
+              <span className="legend-box current"></span>
+              Current
+            </div>
+
+            <div>
+              <span className="legend-box answered"></span>
+              Answered
+            </div>
+
+            <div>
+              <span className="legend-box"></span>
+              Not Answered
+            </div>
+
+          </div>
+
+        </aside>
+
+      </main>
+
+      {/* =====================================================
+          SUBMIT CONFIRMATION MODAL
+          ===================================================== */}
+
+      {showSubmitModal && (
+
         <div className="modal-overlay">
 
           <div className="modal">
 
-            <h3>
+            <h2>
               Submit Exam?
-            </h3>
+            </h2>
+
+            <p>
+              Are you sure you want to
+              submit the exam?
+            </p>
 
             <p>
               You have answered{' '}
               <strong>
-                {answeredCount}
+                {Object.keys(answers).length}
               </strong>{' '}
               out of{' '}
               <strong>
@@ -715,33 +598,28 @@ export const ExamInterface = () => {
               questions.
             </p>
 
-            <p>
-              Are you sure you want to
-              submit? You cannot change
-              your answers after submission.
-            </p>
-
             <div className="modal-buttons">
 
               <button
-                onClick={() =>
-                  setShowExitWarning(false)
-                }
+                type="button"
                 className="cancel-button"
+                onClick={() =>
+                  setShowSubmitModal(false)
+                }
+                disabled={submitting}
               >
                 Cancel
               </button>
 
               <button
-                onClick={
-                  handleManualSubmit
-                }
+                type="button"
                 className="confirm-button"
-                disabled={isSubmitting}
+                onClick={handleManualSubmit}
+                disabled={submitting}
               >
-                {isSubmitting
+                {submitting
                   ? 'Submitting...'
-                  : 'Submit'}
+                  : 'Yes, Submit'}
               </button>
 
             </div>
@@ -749,239 +627,151 @@ export const ExamInterface = () => {
           </div>
 
         </div>
+
       )}
 
-      {/* ======================================================
-          MAIN CONTENT
-      ====================================================== */}
+      {/* =====================================================
+          RESULT MODAL
+          ===================================================== */}
 
-      <main className="exam-main">
+      {showResult &&
+        submissionResult && (
 
-        <div className="exam-container">
+          <div className="modal-overlay">
 
-          {/* ==================================================
-              SIDEBAR
-          ================================================== */}
+            <div className="modal result-modal">
 
-          <aside className="exam-sidebar">
+              <h2>
+                🎉 Exam Submitted Successfully
+              </h2>
 
-            <div className="progress-section">
+              <div className="result-summary">
 
-              <h3>
-                Progress
-              </h3>
+                <div className="result-item">
 
-              <div className="progress-bar">
+                  <span>
+                    Score
+                  </span>
 
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${
-                      (answeredCount /
-                        questions.length) *
-                      100
-                    }%`
-                  }}
-                />
+                  <strong>
+                    {submissionResult.score}{' '}
+                    /{' '}
+                    {submissionResult.total_marks}
+                  </strong>
 
-              </div>
+                </div>
 
-              <p>
-                {answeredCount} of{' '}
-                {questions.length}{' '}
-                answered
-              </p>
+                <div className="result-item">
 
-            </div>
+                  <span>
+                    Percentage
+                  </span>
 
-            <div className="questions-nav">
+                  <strong>
+                    {submissionResult.percentage}%
+                  </strong>
 
-              <h3>
-                Questions
-              </h3>
+                </div>
 
-              <div className="question-buttons">
+                <div className="result-item">
 
-                {questions.map(
-                  (q, idx) => (
+                  <span>
+                    Correct
+                  </span>
 
-                    <button
-                      key={q.id}
-                      onClick={() =>
-                        setCurrentQuestionIndex(
-                          idx
-                        )
-                      }
-                      className={`question-nav-btn ${
-                        idx ===
-                        currentQuestionIndex
-                          ? 'active'
-                          : ''
-                      } ${
-                        answers[q.id] !== null
-                          ? 'answered'
-                          : 'unanswered'
-                      }`}
-                      title={`Question ${
-                        idx + 1
-                      }`}
-                    >
-                      {idx + 1}
-                    </button>
+                  <strong>
+                    {submissionResult.correct_answers}
+                  </strong>
 
-                  )
-                )}
+                </div>
 
-              </div>
+                <div className="result-item">
 
-            </div>
+                  <span>
+                    Incorrect
+                  </span>
 
-          </aside>
+                  <strong>
+                    {submissionResult.incorrect_answers}
+                  </strong>
 
-          {/* ==================================================
-              QUESTION
-          ================================================== */}
+                </div>
 
-          <section className="exam-content">
+                <div className="result-item">
 
-            <div className="question-section">
+                  <span>
+                    Unanswered
+                  </span>
 
-              <div className="question-header">
+                  <strong>
+                    {submissionResult.unanswered}
+                  </strong>
 
-                <h3>
-                  Question{' '}
-                  {currentQuestionIndex + 1}{' '}
-                  of {questions.length}
-                </h3>
+                </div>
 
-              </div>
+                <div className="result-item">
 
-              <div className="question-box">
+                  <span>
+                    Status
+                  </span>
 
-                <p className="question-text">
-                  {
-                    currentQuestion.question_text
-                  }
-                </p>
-
-                <div className="options-list">
-
-                  {currentQuestion.options.map(
-                    (option) => (
-
-                      <div
-                        key={option.id}
-                        className="option-wrapper"
-                      >
-
-                        <label className="option-label">
-
-                          <input
-                            type="radio"
-                            name={`question-${currentQuestion.id}`}
-                            value={option.id}
-                            checked={
-                              answers[
-                                currentQuestion.id
-                              ] === option.id
-                            }
-                            onChange={() =>
-                              handleAnswerSelect(
-                                option.id
-                              )
-                            }
-                            disabled={
-                              isSubmitting
-                            }
-                          />
-
-                          <span className="option-text">
-                            {
-                              option.option_text
-                            }
-                          </span>
-
-                        </label>
-
-                      </div>
-
-                    )
-                  )}
+                  <strong
+                    className={
+                      submissionResult.is_passed
+                        ? 'passed'
+                        : 'failed'
+                    }
+                  >
+                    {submissionResult.is_passed
+                      ? 'PASS'
+                      : 'FAIL'}
+                  </strong>
 
                 </div>
 
               </div>
 
-              {/* ==================================================
-                  QUESTION NAVIGATION
-              ================================================== */}
-
-              <div className="navigation-buttons">
+              <div className="modal-buttons">
 
                 <button
-                  onClick={
-                    handlePreviousQuestion
+                  type="button"
+                  className="cancel-button"
+                  onClick={() =>
+                    navigate(
+                      '/student/dashboard'
+                    )
                   }
-                  disabled={
-                    currentQuestionIndex === 0
-                  }
-                  className="nav-button prev-button"
                 >
-                  ← Previous
+                  Back to Dashboard
                 </button>
 
-                <span className="question-status">
-
-                  {answers[
-                    currentQuestion.id
-                  ] !== null
-                    ? '✓ Answered'
-                    : 'Not answered'}
-
-                </span>
-
                 <button
-                  onClick={
-                    handleNextQuestion
+                  type="button"
+                  className="confirm-button"
+                  onClick={() =>
+                    navigate(
+                      `/student/result-review/${submissionId}`
+                    )
                   }
-                  disabled={
-                    currentQuestionIndex ===
-                    questions.length - 1
-                  }
-                  className="nav-button next-button"
                 >
-                  Next →
+                  View Detailed Review
                 </button>
 
               </div>
 
             </div>
 
-          </section>
+          </div>
 
-        </div>
+        )}
 
-      </main>
-
-      {/* ======================================================
-          ERROR MESSAGE
-      ====================================================== */}
-
+      {/* ERROR MESSAGE */}
       {error && (
-        <div className="error-message-bar">
 
+        <div className="error-message">
           {error}
-
-          <button
-            onClick={() =>
-              setError('')
-            }
-            className="close-button"
-          >
-            ×
-          </button>
-
         </div>
+
       )}
 
     </div>
