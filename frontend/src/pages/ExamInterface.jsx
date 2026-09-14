@@ -21,6 +21,13 @@ export const ExamInterface = () => {
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(null);
 
+  // ============================================================
+  // RESULT STATE
+  // ============================================================
+
+  const [submissionResult, setSubmissionResult] = useState(null);
+  const [showResult, setShowResult] = useState(false);
+
   const { showWarningNeeded, resetWarningFlag } =
     useBackButtonProtection(true);
 
@@ -38,20 +45,25 @@ export const ExamInterface = () => {
     async () => {
       try {
         setIsSubmitting(true);
+        setError('');
 
-        await studentService.submitExam(
-          submissionId,
-          true
+        const response =
+          await studentService.submitExam(
+            submissionId,
+            true
+          );
+
+        console.log(
+          'Auto submit result:',
+          response
         );
 
-        navigate(
-          `/student/results/${submissionId}`,
-          {
-            state: {
-              autoSubmitted: true
-            }
-          }
+        setSubmissionResult(
+          response?.result || null
         );
+
+        setShowResult(true);
+
       } catch (err) {
         console.error(
           'Auto submit failed:',
@@ -62,6 +74,7 @@ export const ExamInterface = () => {
           err.response?.data?.message ||
           'Failed to submit exam automatically'
         );
+
       } finally {
         setIsSubmitting(false);
       }
@@ -192,7 +205,6 @@ export const ExamInterface = () => {
       setQuestions(questionsData);
 
       // --------------------------------------------------------
-      // IMPORTANT:
       // Get exact remaining time from backend
       // --------------------------------------------------------
 
@@ -251,6 +263,7 @@ export const ExamInterface = () => {
         err.response?.data?.message ||
         'Failed to load exam'
       );
+
     } finally {
       setIsLoading(false);
     }
@@ -341,20 +354,26 @@ export const ExamInterface = () => {
 
     try {
       setIsSubmitting(true);
+      setError('');
 
-      await studentService.submitExam(
-        submissionId,
-        true
+      const response =
+        await studentService.submitExam(
+          submissionId,
+          true
+        );
+
+      console.log(
+        'Auto submit result:',
+        response
       );
 
-      navigate(
-        `/student/results/${submissionId}`,
-        {
-          state: {
-            autoSubmitted: true
-          }
-        }
+      // Backend returns result
+      setSubmissionResult(
+        response?.result || null
       );
+
+      // Show result popup immediately
+      setShowResult(true);
 
     } catch (err) {
       console.error(
@@ -381,17 +400,33 @@ export const ExamInterface = () => {
 
     try {
       setIsSubmitting(true);
+      setError('');
 
-      await studentService.submitExam(
-        submissionId,
-        false
+      const response =
+        await studentService.submitExam(
+          submissionId,
+          false
+        );
+
+      console.log(
+        'Manual submit result:',
+        response
       );
 
-      navigate(
-        `/student/results/${submissionId}`
+      // Backend returns result
+      setSubmissionResult(
+        response?.result || null
       );
+
+      // Show result popup immediately
+      setShowResult(true);
 
     } catch (err) {
+      console.error(
+        'Exam submission failed:',
+        err
+      );
+
       setError(
         err.response?.data?.message ||
         'Failed to submit exam'
@@ -438,6 +473,7 @@ export const ExamInterface = () => {
     return (
       <div className="error-container">
         <div className="error-box">
+
           <h2>Error</h2>
 
           <p>{error}</p>
@@ -450,6 +486,7 @@ export const ExamInterface = () => {
           >
             Return to Dashboard
           </button>
+
         </div>
       </div>
     );
@@ -470,7 +507,10 @@ export const ExamInterface = () => {
   return (
     <div className="exam-interface-container">
 
-      {/* Back Button Warning Modal */}
+      {/* ======================================================
+          BACK BUTTON WARNING
+      ====================================================== */}
+
       {showBackWarning && (
         <BackButtonWarning
           onResponse={
@@ -479,16 +519,147 @@ export const ExamInterface = () => {
         />
       )}
 
-      {/* Header */}
+      {/* ======================================================
+          RESULT MODAL
+      ====================================================== */}
+
+      {showResult && submissionResult && (
+        <div className="modal-overlay">
+
+          <div className="modal result-modal">
+
+            <h2>
+              🎉 Exam Submitted Successfully
+            </h2>
+
+            <div className="result-summary">
+
+              {/* Score */}
+              <div className="result-item">
+                <span>
+                  Score
+                </span>
+
+                <strong>
+                  {submissionResult.score}
+                  {' / '}
+                  {submissionResult.total_marks}
+                </strong>
+              </div>
+
+              {/* Percentage */}
+              <div className="result-item">
+                <span>
+                  Percentage
+                </span>
+
+                <strong>
+                  {submissionResult.percentage}%
+                </strong>
+              </div>
+
+              {/* Correct */}
+              <div className="result-item">
+                <span>
+                  Correct
+                </span>
+
+                <strong>
+                  {submissionResult.correct_answers}
+                </strong>
+              </div>
+
+              {/* Incorrect */}
+              <div className="result-item">
+                <span>
+                  Incorrect
+                </span>
+
+                <strong>
+                  {submissionResult.incorrect_answers}
+                </strong>
+              </div>
+
+              {/* Unanswered */}
+              <div className="result-item">
+                <span>
+                  Unanswered
+                </span>
+
+                <strong>
+                  {submissionResult.unanswered}
+                </strong>
+              </div>
+
+              {/* Status */}
+              <div className="result-item">
+                <span>
+                  Status
+                </span>
+
+                <strong
+                  className={
+                    submissionResult.is_passed
+                      ? 'passed'
+                      : 'failed'
+                  }
+                >
+                  {submissionResult.is_passed
+                    ? 'PASS'
+                    : 'FAIL'}
+                </strong>
+              </div>
+
+            </div>
+
+            {/* Buttons */}
+            <div className="modal-buttons">
+
+              <button
+                className="cancel-button"
+                onClick={() =>
+                  navigate(
+                    '/student/dashboard'
+                  )
+                }
+              >
+                Back to Dashboard
+              </button>
+
+              <button
+                className="confirm-button"
+                onClick={() =>
+                  navigate(
+                    `/student/result-review/${submissionId}`
+                  )
+                }
+              >
+                View Detailed Review
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* ======================================================
+          HEADER
+      ====================================================== */}
+
       <header className="exam-header">
 
         <div className="header-left">
+
           <h2>
             Exam in Progress
           </h2>
+
         </div>
 
         <div className="header-center">
+
           <div
             className={`timer ${
               isExpired
@@ -500,9 +671,11 @@ export const ExamInterface = () => {
           >
             ⏱️ {formattedTime}
           </div>
+
         </div>
 
         <div className="header-right">
+
           <button
             onClick={() =>
               setShowExitWarning(true)
@@ -512,11 +685,15 @@ export const ExamInterface = () => {
           >
             Submit Exam
           </button>
+
         </div>
 
       </header>
 
-      {/* Submit Confirmation Modal */}
+      {/* ======================================================
+          SUBMIT CONFIRMATION MODAL
+      ====================================================== */}
+
       {showExitWarning && (
         <div className="modal-overlay">
 
@@ -574,12 +751,18 @@ export const ExamInterface = () => {
         </div>
       )}
 
-      {/* Main Content */}
+      {/* ======================================================
+          MAIN CONTENT
+      ====================================================== */}
+
       <main className="exam-main">
 
         <div className="exam-container">
 
-          {/* Sidebar */}
+          {/* ==================================================
+              SIDEBAR
+          ================================================== */}
+
           <aside className="exam-sidebar">
 
             <div className="progress-section">
@@ -621,6 +804,7 @@ export const ExamInterface = () => {
 
                 {questions.map(
                   (q, idx) => (
+
                     <button
                       key={q.id}
                       onClick={() =>
@@ -644,6 +828,7 @@ export const ExamInterface = () => {
                     >
                       {idx + 1}
                     </button>
+
                   )
                 )}
 
@@ -653,7 +838,10 @@ export const ExamInterface = () => {
 
           </aside>
 
-          {/* Question */}
+          {/* ==================================================
+              QUESTION
+          ================================================== */}
+
           <section className="exam-content">
 
             <div className="question-section">
@@ -724,6 +912,10 @@ export const ExamInterface = () => {
 
               </div>
 
+              {/* ==================================================
+                  QUESTION NAVIGATION
+              ================================================== */}
+
               <div className="navigation-buttons">
 
                 <button
@@ -771,7 +963,10 @@ export const ExamInterface = () => {
 
       </main>
 
-      {/* Error message */}
+      {/* ======================================================
+          ERROR MESSAGE
+      ====================================================== */}
+
       {error && (
         <div className="error-message-bar">
 
