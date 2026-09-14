@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import studentService from '../services/studentService';
-
+import "../styles/ExamInterface.css"
 
 const ExamInterface = () => {
   const { examId } = useParams();
